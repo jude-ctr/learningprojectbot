@@ -38,6 +38,9 @@ def _build_strategies() -> list[BaseStrategy]:
     enabled = [name for name, on in flags.items() if on]
     disabled = [name for name, on in flags.items() if not on]
 
+    logger.info("Market scope: %s", settings.market_scope.upper())
+    if settings.market_timing_enabled:
+        logger.info("  Market-timing scope: %s", settings.market_timing_scope.upper())
     logger.info("Strategies ENABLED:  %s", ", ".join(enabled) or "(none)")
     if disabled:
         logger.info("Strategies DISABLED: %s", ", ".join(disabled))

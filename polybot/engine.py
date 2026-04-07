@@ -25,6 +25,7 @@ from polybot.models import Market
 from polybot.risk.manager import RiskManager
 from polybot.strategies.base import BaseStrategy
 from polybot.strategies.confluence import ConfluenceFilter
+from polybot.utils.market_filter import filter_by_scope
 
 logger = logging.getLogger(__name__)
 
@@ -92,10 +93,12 @@ class Engine:
             self._market_refresh_counter = 0
 
         self._market_refresh_counter += 1
-        markets = self._cached_markets
+
+        # Apply global market scope filter
+        markets = filter_by_scope(self._cached_markets, settings.market_scope)
 
         if not markets:
-            logger.warning("No tradeable markets – skipping tick")
+            logger.warning("No tradeable markets in scope '%s' – skipping tick", settings.market_scope)
             return
 
         context = self._build_context(markets)

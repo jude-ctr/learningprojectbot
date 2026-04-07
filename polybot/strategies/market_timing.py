@@ -19,6 +19,7 @@ from typing import Any
 from polybot.config import settings
 from polybot.models import Market, OrderType, Side, Signal
 from polybot.strategies.base import BaseStrategy
+from polybot.utils.market_filter import filter_by_scope
 
 logger = logging.getLogger(__name__)
 
@@ -89,10 +90,15 @@ class MarketTimingHedge(BaseStrategy):
         if not settings.market_timing_enabled:
             return []
 
+        # Apply per-strategy scope filter
+        scoped_markets = filter_by_scope(markets, settings.market_timing_scope)
+        if not scoped_markets:
+            return []
+
         signals: list[Signal] = []
         midpoints = context.get("midpoints", {})
 
-        for mkt in markets:
+        for mkt in scoped_markets:
             mid = midpoints.get(mkt.condition_id)
             if mid is None:
                 continue

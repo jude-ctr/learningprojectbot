@@ -73,8 +73,18 @@ class Settings:
     max_position_size_usd: float = field(default_factory=lambda: _env_float("MAX_POSITION_SIZE_USD", 100.0))
     max_open_orders: int = field(default_factory=lambda: _env_int("MAX_OPEN_ORDERS", 10))
 
+    # ── Market scope (controls which markets the bot trades) ─────────────
+    # Options: "all", "btc", "crypto", "btc+crypto"
+    # "all"        = every market on Polymarket
+    # "btc"        = only Bitcoin-related markets
+    # "crypto"     = only crypto markets (BTC + altcoins/DeFi/etc)
+    # "btc+crypto" = same as "crypto" (explicit alias)
+    market_scope: str = field(default_factory=lambda: _env("MARKET_SCOPE", "all"))
+
     # ── Market-timing hedge strategy ─────────────────────────────────────
     market_timing_enabled: bool = field(default_factory=lambda: _env_bool("MARKET_TIMING_ENABLED", True))
+    # Scope: "all", "btc", "crypto" – which markets this strategy runs on
+    market_timing_scope: str = field(default_factory=lambda: _env("MARKET_TIMING_SCOPE", "all"))
     market_timing_lookback: int = field(default_factory=lambda: _env_int("MARKET_TIMING_LOOKBACK", 20))
     market_timing_ema_fast: int = field(default_factory=lambda: _env_int("MARKET_TIMING_EMA_FAST", 5))
     market_timing_ema_slow: int = field(default_factory=lambda: _env_int("MARKET_TIMING_EMA_SLOW", 15))
