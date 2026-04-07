@@ -6,11 +6,12 @@ Swap this out or subclass it to support other prediction-market protocols.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
 from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import OrderArgs
+from py_clob_client.clob_types import BookParams, OrderArgs
 
 from polybot.config import settings
 from polybot.models import Signal
@@ -27,8 +28,6 @@ class PolymarketConnector:
     """
 
     def __init__(self) -> None:
-        # ClobClient's 'key' param is the private key (not an API key).
-        # Pass None when empty to avoid hex parsing errors.
         private_key = settings.private_key if settings.private_key else None
 
         self._client = ClobClient(
@@ -40,7 +39,6 @@ class PolymarketConnector:
         )
         self._authenticated = False
 
-        # Only derive creds if a private key is available
         if settings.private_key:
             self._authenticate()
         else:
@@ -52,7 +50,6 @@ class PolymarketConnector:
                      settings.dry_run, self._authenticated)
 
     def _authenticate(self) -> None:
-        """Derive and set API credentials from the private key."""
         try:
             creds = self._client.create_or_derive_api_creds()
             self._client.set_api_creds(creds)
@@ -63,14 +60,49 @@ class PolymarketConnector:
 
     # ── Market data (no auth required) ───────────────────────────────────
 
-    def get_markets(self, *, max_pages: int = 10) -> list[dict[str, Any]]:
-        """Fetch available markets from the CLOB, paginating until we find open ones.
+    def get_markets(self, *, max_pages: int = 5) -> list[dict[str, Any]]:
+        """Fetch actively-traded markets using the sampling endpoint.
 
-        The API returns oldest markets first, so page 1 is mostly closed.
-        We paginate forward and collect markets where accepting_orders=True.
+        Uses get_sampling_markets which returns only markets with live
+        liquidity, avoiding the 10k+ closed markets from the full endpoint.
+        Falls back to the full endpoint if sampling returns nothing.
         """
-        import json
+        markets = self._fetch_sampling_markets(max_pages)
+        if markets:
+            return markets
 
+        logger.info("Sampling endpoint returned 0 markets – falling back to full endpoint")
+        return self._fetch_all_markets(max_pages)
+
+    def _fetch_sampling_markets(self, max_pages: int) -> list[dict[str, Any]]:
+        """Fetch from /sampling-markets – only actively-traded markets."""
+        all_markets: list[dict[str, Any]] = []
+        cursor = "MA=="
+
+        for page in range(max_pages):
+            try:
+                resp = self._client.get_sampling_markets(next_cursor=cursor)
+            except Exception:
+                logger.debug("Sampling markets request failed on page %d", page + 1)
+                break
+
+            raw_list, next_cursor = self._unwrap_response(resp)
+
+            for item in raw_list:
+                market = self._parse_market_item(item)
+                if market is not None:
+                    all_markets.append(market)
+
+            if not next_cursor or next_cursor == cursor or next_cursor == "LTE=":
+                break
+            cursor = next_cursor
+
+        logger.info("Sampling endpoint: fetched %d markets across %d page(s)",
+                     len(all_markets), page + 1)
+        return all_markets
+
+    def _fetch_all_markets(self, max_pages: int) -> list[dict[str, Any]]:
+        """Fallback: paginate the full /markets endpoint."""
         all_markets: list[dict[str, Any]] = []
         cursor = "MA=="
 
@@ -83,21 +115,16 @@ class PolymarketConnector:
                 if market is not None:
                     all_markets.append(market)
 
-            logger.debug("Page %d: got %d items, cursor=%s", page + 1, len(raw_list), next_cursor)
-
-            # Stop if no more pages
             if not next_cursor or next_cursor == cursor or next_cursor == "LTE=":
                 break
             cursor = next_cursor
 
-        logger.info("Fetched %d markets across %d page(s)", len(all_markets), page + 1)
+        logger.info("Full endpoint: fetched %d markets across %d page(s)",
+                     len(all_markets), page + 1)
         return all_markets
 
     @staticmethod
     def _unwrap_response(resp: Any) -> tuple[list, str | None]:
-        """Extract the data list and next_cursor from a CLOB API response."""
-        import json
-
         if isinstance(resp, dict):
             return resp.get("data", []), resp.get("next_cursor")
         if isinstance(resp, list):
@@ -114,9 +141,6 @@ class PolymarketConnector:
 
     @staticmethod
     def _parse_market_item(item: Any) -> dict[str, Any] | None:
-        """Ensure a market item is a dict (handles JSON-string items)."""
-        import json
-
         if isinstance(item, dict):
             return item
         if isinstance(item, str):
@@ -131,26 +155,79 @@ class PolymarketConnector:
         return self._client.get_order_book(token_id)
 
     def get_midpoint(self, token_id: str) -> float | None:
-        """Get the midpoint price for a token.  Returns None if unavailable (404 / no book)."""
+        """Get the midpoint price for a token.  Returns None if unavailable."""
         try:
             result = self._client.get_midpoint(token_id)
             mid = float(result)
             if mid <= 0 or mid >= 1:
                 return None
             return mid
-        except Exception as exc:
-            # 404 = resolved/no-book market, not worth logging at warning level
-            exc_str = str(exc)
-            if "404" in exc_str or "not found" in exc_str.lower():
-                logger.debug("No midpoint for token %s (404 – likely resolved)", token_id[:16])
-            else:
-                logger.debug("Could not fetch midpoint for token %s: %s", token_id[:16], exc)
+        except Exception:
             return None
+
+    def get_prices_batch(self, token_ids: list[str]) -> dict[str, float]:
+        """Fetch prices for multiple tokens in a single request.
+
+        Returns {token_id: price} for tokens that have a valid price.
+        """
+        if not token_ids:
+            return {}
+
+        params = [BookParams(token_id=tid, side="buy") for tid in token_ids]
+        try:
+            resp = self._client.get_prices(params)
+        except Exception:
+            logger.debug("Batch price fetch failed, falling back to individual")
+            return {}
+
+        prices: dict[str, float] = {}
+        if isinstance(resp, dict):
+            for tid, price_str in resp.items():
+                try:
+                    p = float(price_str)
+                    if 0 < p < 1:
+                        prices[tid] = p
+                except (ValueError, TypeError):
+                    pass
+        elif isinstance(resp, list):
+            for i, price_data in enumerate(resp):
+                if i < len(token_ids):
+                    try:
+                        p = float(price_data.get("price", 0) if isinstance(price_data, dict) else price_data)
+                        if 0 < p < 1:
+                            prices[token_ids[i]] = p
+                    except (ValueError, TypeError):
+                        pass
+
+        return prices
+
+    def get_last_trade_prices_batch(self, token_ids: list[str]) -> dict[str, float]:
+        """Fetch last trade prices for multiple tokens in a single request."""
+        if not token_ids:
+            return {}
+
+        params = [BookParams(token_id=tid) for tid in token_ids]
+        try:
+            resp = self._client.get_last_trades_prices(params)
+        except Exception:
+            logger.debug("Batch last-trade-price fetch failed")
+            return {}
+
+        prices: dict[str, float] = {}
+        if isinstance(resp, list):
+            for i, item in enumerate(resp):
+                if i < len(token_ids):
+                    try:
+                        p = float(item.get("price", 0) if isinstance(item, dict) else item)
+                        if 0 < p < 1:
+                            prices[token_ids[i]] = p
+                    except (ValueError, TypeError):
+                        pass
+        return prices
 
     # ── Order management (auth required) ─────────────────────────────────
 
     def place_order(self, signal: Signal) -> dict[str, Any] | None:
-        """Translate a Signal into a CLOB order.  Returns API response or None if dry-run."""
         token_id = signal.market.token_ids.get(signal.outcome)
         if token_id is None:
             logger.error("No token_id for outcome=%s in market=%s", signal.outcome, signal.market.condition_id)
