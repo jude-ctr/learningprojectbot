@@ -115,8 +115,22 @@ class PolymarketConnector:
     def get_orderbook(self, token_id: str) -> dict[str, Any]:
         return self._client.get_order_book(token_id)
 
-    def get_midpoint(self, token_id: str) -> float:
-        return float(self._client.get_midpoint(token_id))
+    def get_midpoint(self, token_id: str) -> float | None:
+        """Get the midpoint price for a token.  Returns None if unavailable (404 / no book)."""
+        try:
+            result = self._client.get_midpoint(token_id)
+            mid = float(result)
+            if mid <= 0 or mid >= 1:
+                return None
+            return mid
+        except Exception as exc:
+            # 404 = resolved/no-book market, not worth logging at warning level
+            exc_str = str(exc)
+            if "404" in exc_str or "not found" in exc_str.lower():
+                logger.debug("No midpoint for token %s (404 – likely resolved)", token_id[:16])
+            else:
+                logger.debug("Could not fetch midpoint for token %s: %s", token_id[:16], exc)
+            return None
 
     # ── Order management (auth required) ─────────────────────────────────
 

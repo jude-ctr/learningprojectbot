@@ -103,7 +103,7 @@ class Engine:
     # ── Helpers ──────────────────────────────────────────────────────────
 
     def _fetch_markets(self) -> list[Market]:
-        """Pull raw market data and convert to domain objects."""
+        """Pull raw market data and convert to domain objects.  Skips inactive/closed markets."""
         raw = self.connector.get_markets()
         logger.debug("get_markets returned %d items (type=%s)",
                      len(raw) if isinstance(raw, list) else -1, type(raw).__name__)
@@ -112,12 +112,20 @@ class Engine:
             if not isinstance(m, dict):
                 logger.warning("Skipping non-dict market entry: %s (type=%s)", m, type(m).__name__)
                 continue
+            # Skip resolved / inactive / closed markets — they have no order book
+            if not m.get("active", True):
+                continue
+            if m.get("closed", False):
+                continue
+            if m.get("end_date_iso") and not m.get("accepting_orders", True):
+                continue
             markets.append(Market(
                 condition_id=m.get("condition_id", ""),
                 question=m.get("question", ""),
                 token_ids=self._extract_token_ids(m),
-                active=m.get("active", True),
+                active=True,
             ))
+        logger.info("Loaded %d active markets (filtered from %d total)", len(markets), len(raw))
         return markets
 
     def _build_context(self, markets: list[Market]) -> dict[str, Any]:
@@ -126,10 +134,10 @@ class Engine:
         for mkt in markets:
             yes_id = mkt.token_ids.get("YES")
             if yes_id:
-                try:
-                    midpoints[mkt.condition_id] = self.connector.get_midpoint(yes_id)
-                except Exception:
-                    logger.debug("Could not fetch midpoint for %s", mkt.condition_id)
+                mid = self.connector.get_midpoint(yes_id)
+                if mid is not None:
+                    midpoints[mkt.condition_id] = mid
+        logger.debug("Got midpoints for %d / %d markets", len(midpoints), len(markets))
         return {"midpoints": midpoints}
 
     @staticmethod
