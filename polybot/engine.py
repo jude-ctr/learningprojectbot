@@ -107,17 +107,26 @@ class Engine:
         raw = self.connector.get_markets()
         logger.debug("get_markets returned %d items (type=%s)",
                      len(raw) if isinstance(raw, list) else -1, type(raw).__name__)
+
+        # Log first market's keys so we can see the actual API shape
+        if raw and isinstance(raw[0], dict):
+            sample = raw[0]
+            logger.info("Sample market keys: %s", list(sample.keys()))
+            logger.info("Sample market active=%r, closed=%r, accepting_orders=%r, end_date_iso=%r",
+                        sample.get("active"), sample.get("closed"),
+                        sample.get("accepting_orders"), sample.get("end_date_iso"))
+
         markets: list[Market] = []
         for m in raw:
             if not isinstance(m, dict):
                 logger.warning("Skipping non-dict market entry: %s (type=%s)", m, type(m).__name__)
                 continue
             # Skip resolved / inactive / closed markets — they have no order book
-            if not m.get("active", True):
+            if m.get("active") is False:
                 continue
-            if m.get("closed", False):
+            if m.get("closed") is True:
                 continue
-            if m.get("end_date_iso") and not m.get("accepting_orders", True):
+            if m.get("accepting_orders") is False:
                 continue
             markets.append(Market(
                 condition_id=m.get("condition_id", ""),
