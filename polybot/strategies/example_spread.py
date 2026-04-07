@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from polybot.config import settings
 from polybot.models import Market, OrderType, Side, Signal
 from polybot.strategies.base import BaseStrategy
 
@@ -18,7 +19,10 @@ SPREAD_BPS = 200  # 2 cents each side of mid
 
 
 class MidpointSpread(BaseStrategy):
-    """Posts symmetric limit orders around the midpoint."""
+    """Posts symmetric limit orders around the midpoint.
+
+    Toggle via SPREAD_ENABLED=true/false in .env.
+    """
 
     name = "midpoint_spread"
 
@@ -27,6 +31,9 @@ class MidpointSpread(BaseStrategy):
         self.size_usd = size_usd
 
     def on_tick(self, markets: list[Market], context: dict[str, Any]) -> list[Signal]:
+        if not settings.spread_enabled:
+            return []
+
         signals: list[Signal] = []
         for mkt in markets:
             mid = context.get("midpoints", {}).get(mkt.condition_id)

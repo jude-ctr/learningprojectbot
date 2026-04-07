@@ -24,6 +24,7 @@ from polybot.connectors.clob import PolymarketConnector
 from polybot.models import Market
 from polybot.risk.manager import RiskManager
 from polybot.strategies.base import BaseStrategy
+from polybot.strategies.confluence import ConfluenceFilter
 
 logger = logging.getLogger(__name__)
 
@@ -103,15 +104,31 @@ class Engine:
             logger.warning("No midpoints available – skipping tick")
             return
 
+        # Collect signals from all strategies
+        confluence = ConfluenceFilter()
+        strategy_signals: dict[str, list] = {}
         for strategy in self.strategies:
             signals = strategy.on_tick(markets, context)
-            for signal in signals:
-                if not self.risk.check(signal):
-                    strategy.on_cancel(signal, "risk_rejected")
-                    continue
-                result = self.connector.place_order(signal)
-                if result:
-                    self.risk.record_order(signal)
+            strategy_signals[strategy.name] = signals
+            confluence.add_signals(strategy.name, signals)
+
+        # Apply confluence filter (pass-through if disabled)
+        final_signals = confluence.resolve()
+        confluence.reset()
+
+        # Execute signals through risk gate
+        for signal in final_signals:
+            if not self.risk.check(signal):
+                # Notify the originating strategy
+                strat_name = signal.metadata.get("strategy", "")
+                for strategy in self.strategies:
+                    if strategy.name == strat_name:
+                        strategy.on_cancel(signal, "risk_rejected")
+                        break
+                continue
+            result = self.connector.place_order(signal)
+            if result:
+                self.risk.record_order(signal)
 
     # ── Helpers ──────────────────────────────────────────────────────────
 
