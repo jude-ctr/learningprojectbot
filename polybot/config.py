@@ -7,13 +7,32 @@ No pydantic-settings dependency required.
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Load .env from project root (if it exists)
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+# Search for .env in multiple likely locations
+_candidates = [
+    Path.cwd() / ".env",                                    # current working directory
+    Path(__file__).resolve().parent.parent / ".env",         # project root (relative to this file)
+    Path(__file__).resolve().parent / ".env",                # polybot/ dir (in case)
+]
+
+_loaded_from = None
+for _candidate in _candidates:
+    if _candidate.is_file():
+        load_dotenv(_candidate, override=True)
+        _loaded_from = str(_candidate)
+        break
+
+if _loaded_from:
+    print(f"[polybot] Loaded .env from: {_loaded_from}", file=sys.stderr)
+else:
+    print(f"[polybot] WARNING: No .env file found. Searched:", file=sys.stderr)
+    for c in _candidates:
+        print(f"  - {c} (exists={c.is_file()})", file=sys.stderr)
 
 
 def _env(key: str, default: str = "") -> str:
@@ -69,3 +88,7 @@ class Settings:
 
 # Singleton – import this everywhere
 settings = Settings()
+
+# Startup sanity check
+_pk_status = "SET (length={})".format(len(settings.private_key)) if settings.private_key else "EMPTY"
+print(f"[polybot] Config: PRIVATE_KEY={_pk_status}, DRY_RUN={settings.dry_run}", file=sys.stderr)
