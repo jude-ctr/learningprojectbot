@@ -51,10 +51,11 @@ def test_different_strategies_independent_caps():
     rm = RiskManager()
     sig_a = _make_signal(size=40.0, strategy="alpha", cap=50.0)
     rm.record_order(sig_a)
-    assert rm.check(sig_a) is True  # can't do another 40 under alpha
+    assert rm.check(sig_a) is False  # 40 + 40 = 80 > cap 50
 
+    # beta has its own independent budget — 40 is fine under beta's 50 cap
     sig_b = _make_signal(size=40.0, strategy="beta", cap=50.0)
-    assert rm.check(sig_b) is True  # beta is independent
+    assert rm.check(sig_b) is True
 
 
 def test_record_cancel_reduces_exposure():
