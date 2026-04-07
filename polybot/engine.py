@@ -179,10 +179,12 @@ class Engine:
             last_trade = self.connector.get_last_trade_prices_batch(missing)
             prices.update(last_trade)
 
-        # Last resort: individual midpoint calls for still-missing (capped to avoid spam)
+        # Last resort: individual midpoint calls for still-missing
         still_missing = [tid for tid in token_ids if tid not in prices]
         if still_missing:
-            for tid in still_missing[:5]:  # max 5 individual calls
+            logger.info("Batch prices got %d/%d, trying %d individual midpoints",
+                        len(prices), len(token_ids), min(len(still_missing), 20))
+            for tid in still_missing[:20]:  # cap individual calls
                 mid = self.connector.get_midpoint(tid)
                 if mid is not None:
                     prices[tid] = mid

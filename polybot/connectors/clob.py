@@ -60,7 +60,7 @@ class PolymarketConnector:
 
     # ── Market data (no auth required) ───────────────────────────────────
 
-    def get_markets(self, *, max_pages: int = 5) -> list[dict[str, Any]]:
+    def get_markets(self, *, max_pages: int = 2) -> list[dict[str, Any]]:
         """Fetch actively-traded markets using the sampling endpoint.
 
         Uses get_sampling_markets which returns only markets with live
@@ -158,46 +158,62 @@ class PolymarketConnector:
         """Get the midpoint price for a token.  Returns None if unavailable."""
         try:
             result = self._client.get_midpoint(token_id)
-            mid = float(result)
-            if mid <= 0 or mid >= 1:
-                return None
-            return mid
+            mid = self._extract_price(result)
+            if mid is not None and 0 < mid < 1:
+                return mid
+            return None
         except Exception:
             return None
+
+    @staticmethod
+    def _extract_price(value: Any) -> float | None:
+        """Extract a float price from various response formats.
+
+        The API may return:
+          - A bare float/string: "0.55" or 0.55
+          - A dict: {"mid": "0.55"} or {"price": "0.55"}
+        """
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                return None
+        if isinstance(value, dict):
+            # Try common key names
+            for key in ("mid", "price", "midpoint"):
+                raw = value.get(key)
+                if raw is not None:
+                    try:
+                        return float(raw)
+                    except (ValueError, TypeError):
+                        pass
+        return None
 
     def get_prices_batch(self, token_ids: list[str]) -> dict[str, float]:
         """Fetch prices for multiple tokens in a single request.
 
-        Returns {token_id: price} for tokens that have a valid price.
+        Chunks into batches of 100 to avoid 400 errors from oversized payloads.
         """
         if not token_ids:
             return {}
 
-        params = [BookParams(token_id=tid, side="buy") for tid in token_ids]
-        try:
-            resp = self._client.get_prices(params)
-        except Exception:
-            logger.debug("Batch price fetch failed, falling back to individual")
-            return {}
-
         prices: dict[str, float] = {}
-        if isinstance(resp, dict):
-            for tid, price_str in resp.items():
-                try:
-                    p = float(price_str)
-                    if 0 < p < 1:
-                        prices[tid] = p
-                except (ValueError, TypeError):
-                    pass
-        elif isinstance(resp, list):
-            for i, price_data in enumerate(resp):
-                if i < len(token_ids):
-                    try:
-                        p = float(price_data.get("price", 0) if isinstance(price_data, dict) else price_data)
-                        if 0 < p < 1:
-                            prices[token_ids[i]] = p
-                    except (ValueError, TypeError):
-                        pass
+        chunk_size = 100
+
+        for i in range(0, len(token_ids), chunk_size):
+            chunk = token_ids[i:i + chunk_size]
+            params = [BookParams(token_id=tid, side="buy") for tid in chunk]
+            try:
+                resp = self._client.get_prices(params)
+            except Exception:
+                logger.debug("Batch price fetch failed for chunk %d", i // chunk_size)
+                continue
+
+            self._merge_batch_prices(prices, resp, chunk)
 
         return prices
 
@@ -206,24 +222,35 @@ class PolymarketConnector:
         if not token_ids:
             return {}
 
-        params = [BookParams(token_id=tid) for tid in token_ids]
-        try:
-            resp = self._client.get_last_trades_prices(params)
-        except Exception:
-            logger.debug("Batch last-trade-price fetch failed")
-            return {}
-
         prices: dict[str, float] = {}
-        if isinstance(resp, list):
+        chunk_size = 100
+
+        for i in range(0, len(token_ids), chunk_size):
+            chunk = token_ids[i:i + chunk_size]
+            params = [BookParams(token_id=tid) for tid in chunk]
+            try:
+                resp = self._client.get_last_trades_prices(params)
+            except Exception:
+                logger.debug("Batch last-trade-price fetch failed for chunk %d", i // chunk_size)
+                continue
+
+            self._merge_batch_prices(prices, resp, chunk)
+
+        return prices
+
+    def _merge_batch_prices(self, prices: dict[str, float], resp: Any, token_ids: list[str]) -> None:
+        """Parse a batch price response and merge into the prices dict."""
+        if isinstance(resp, dict):
+            for tid, val in resp.items():
+                p = self._extract_price(val)
+                if p is not None and 0 < p < 1:
+                    prices[tid] = p
+        elif isinstance(resp, list):
             for i, item in enumerate(resp):
                 if i < len(token_ids):
-                    try:
-                        p = float(item.get("price", 0) if isinstance(item, dict) else item)
-                        if 0 < p < 1:
-                            prices[token_ids[i]] = p
-                    except (ValueError, TypeError):
-                        pass
-        return prices
+                    p = self._extract_price(item)
+                    if p is not None and 0 < p < 1:
+                        prices[token_ids[i]] = p
 
     # ── Order management (auth required) ─────────────────────────────────
 
