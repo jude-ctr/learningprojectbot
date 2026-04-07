@@ -103,30 +103,26 @@ class Engine:
     # ── Helpers ──────────────────────────────────────────────────────────
 
     def _fetch_markets(self) -> list[Market]:
-        """Pull raw market data and convert to domain objects.  Skips inactive/closed markets."""
-        raw = self.connector.get_markets()
-        logger.debug("get_markets returned %d items (type=%s)",
-                     len(raw) if isinstance(raw, list) else -1, type(raw).__name__)
+        """Pull raw market data and convert to domain objects.
 
-        # Log first market's keys so we can see the actual API shape
-        if raw and isinstance(raw[0], dict):
-            sample = raw[0]
-            logger.info("Sample market keys: %s", list(sample.keys()))
-            logger.info("Sample market active=%r, closed=%r, accepting_orders=%r, end_date_iso=%r",
-                        sample.get("active"), sample.get("closed"),
-                        sample.get("accepting_orders"), sample.get("end_date_iso"))
+        A market is tradeable when:
+          - accepting_orders = True  (the order book is open)
+          - closed = False           (not resolved)
+          - enable_order_book = True (book is enabled)
+        """
+        raw = self.connector.get_markets()
 
         markets: list[Market] = []
+        skipped = 0
         for m in raw:
             if not isinstance(m, dict):
-                logger.warning("Skipping non-dict market entry: %s (type=%s)", m, type(m).__name__)
                 continue
-            # Skip resolved / inactive / closed markets — they have no order book
-            if m.get("active") is False:
+            # The definitive check: is the order book accepting orders right now?
+            if not m.get("accepting_orders", False):
+                skipped += 1
                 continue
-            if m.get("closed") is True:
-                continue
-            if m.get("accepting_orders") is False:
+            if m.get("closed", False):
+                skipped += 1
                 continue
             markets.append(Market(
                 condition_id=m.get("condition_id", ""),
@@ -134,7 +130,7 @@ class Engine:
                 token_ids=self._extract_token_ids(m),
                 active=True,
             ))
-        logger.info("Loaded %d active markets (filtered from %d total)", len(markets), len(raw))
+        logger.info("Loaded %d tradeable markets (skipped %d closed/inactive)", len(markets), skipped)
         return markets
 
     def _build_context(self, markets: list[Market]) -> dict[str, Any]:

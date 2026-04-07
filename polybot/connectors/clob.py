@@ -63,58 +63,69 @@ class PolymarketConnector:
 
     # ── Market data (no auth required) ───────────────────────────────────
 
-    def get_markets(self, *, limit: int = 50, active_only: bool = True) -> list[dict[str, Any]]:
-        """Fetch available markets from the CLOB.
+    def get_markets(self, *, max_pages: int = 10) -> list[dict[str, Any]]:
+        """Fetch available markets from the CLOB, paginating until we find open ones.
 
-        The raw API returns a paginated dict like ``{"data": [...], "next_cursor": "..."}``.
-        We unwrap it and return just the list of market dicts.
-        Some API versions return JSON-encoded strings inside the data array,
-        so we handle both cases.
+        The API returns oldest markets first, so page 1 is mostly closed.
+        We paginate forward and collect markets where accepting_orders=True.
         """
         import json
 
-        resp = self._client.get_markets(next_cursor="MA==")
+        all_markets: list[dict[str, Any]] = []
+        cursor = "MA=="
 
-        # Step 1: unwrap paginated envelope
+        for page in range(max_pages):
+            resp = self._client.get_markets(next_cursor=cursor)
+            raw_list, next_cursor = self._unwrap_response(resp)
+
+            for item in raw_list:
+                market = self._parse_market_item(item)
+                if market is not None:
+                    all_markets.append(market)
+
+            logger.debug("Page %d: got %d items, cursor=%s", page + 1, len(raw_list), next_cursor)
+
+            # Stop if no more pages
+            if not next_cursor or next_cursor == cursor or next_cursor == "LTE=":
+                break
+            cursor = next_cursor
+
+        logger.info("Fetched %d markets across %d page(s)", len(all_markets), page + 1)
+        return all_markets
+
+    @staticmethod
+    def _unwrap_response(resp: Any) -> tuple[list, str | None]:
+        """Extract the data list and next_cursor from a CLOB API response."""
+        import json
+
         if isinstance(resp, dict):
-            raw_list = resp.get("data", [])
-        elif isinstance(resp, list):
-            raw_list = resp
-        elif isinstance(resp, str):
-            # Entire response is a JSON string
+            return resp.get("data", []), resp.get("next_cursor")
+        if isinstance(resp, list):
+            return resp, None
+        if isinstance(resp, str):
             try:
                 parsed = json.loads(resp)
-                raw_list = parsed.get("data", []) if isinstance(parsed, dict) else parsed
+                if isinstance(parsed, dict):
+                    return parsed.get("data", []), parsed.get("next_cursor")
+                return parsed, None
             except (json.JSONDecodeError, AttributeError):
-                logger.error("Cannot parse get_markets string response: %.200s", resp)
-                return []
-        else:
-            logger.warning("Unexpected get_markets response type: %s", type(resp).__name__)
-            return []
+                logger.error("Cannot parse response: %.200s", resp)
+        return [], None
 
-        if not isinstance(raw_list, list):
-            logger.warning("Expected list of markets, got %s", type(raw_list).__name__)
-            return []
+    @staticmethod
+    def _parse_market_item(item: Any) -> dict[str, Any] | None:
+        """Ensure a market item is a dict (handles JSON-string items)."""
+        import json
 
-        # Step 2: ensure each item is a dict (some APIs return JSON strings per-item)
-        markets: list[dict[str, Any]] = []
-        for item in raw_list:
-            if isinstance(item, dict):
-                markets.append(item)
-            elif isinstance(item, str):
-                try:
-                    parsed_item = json.loads(item)
-                    if isinstance(parsed_item, dict):
-                        markets.append(parsed_item)
-                    else:
-                        logger.debug("Skipping non-dict parsed item: %s", type(parsed_item).__name__)
-                except json.JSONDecodeError:
-                    logger.debug("Skipping unparseable market item: %.100s", item)
-            else:
-                logger.debug("Skipping unexpected market item type: %s", type(item).__name__)
-
-        logger.info("Fetched %d markets from CLOB API", len(markets))
-        return markets
+        if isinstance(item, dict):
+            return item
+        if isinstance(item, str):
+            try:
+                parsed = json.loads(item)
+                return parsed if isinstance(parsed, dict) else None
+            except json.JSONDecodeError:
+                pass
+        return None
 
     def get_orderbook(self, token_id: str) -> dict[str, Any]:
         return self._client.get_order_book(token_id)
