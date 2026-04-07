@@ -60,8 +60,19 @@ class PolymarketConnector:
     # ── Market data (no auth required) ───────────────────────────────────
 
     def get_markets(self, *, limit: int = 50, active_only: bool = True) -> list[dict[str, Any]]:
-        """Fetch available markets from the CLOB."""
-        return self._client.get_markets(next_cursor="MA==")
+        """Fetch available markets from the CLOB.
+
+        The raw API returns a paginated dict like ``{"data": [...], "next_cursor": "..."}``.
+        We unwrap it and return just the list of market dicts.
+        """
+        resp = self._client.get_markets(next_cursor="MA==")
+        # Handle both paginated dict response and bare list
+        if isinstance(resp, dict):
+            return resp.get("data", [])
+        if isinstance(resp, list):
+            return resp
+        logger.warning("Unexpected get_markets response type: %s", type(resp))
+        return []
 
     def get_orderbook(self, token_id: str) -> dict[str, Any]:
         return self._client.get_order_book(token_id)
