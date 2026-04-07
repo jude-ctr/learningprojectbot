@@ -10,6 +10,7 @@ from polybot.connectors.clob import PolymarketConnector
 from polybot.engine import Engine
 from polybot.risk.manager import RiskManager
 from polybot.strategies.example_spread import MidpointSpread
+from polybot.strategies.market_timing import MarketTimingHedge
 from polybot.utils.logging import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,8 @@ def main() -> None:
     # ── Register strategies here ─────────────────────────────────────
     strategies = [
         MidpointSpread(spread_bps=200, size_usd=5.0),
+        # Market-timing hedge – disable via MARKET_TIMING_ENABLED=false in .env
+        MarketTimingHedge(),
         # Add more strategies as you build them:
         # YourAlphaStrategy(...),
     ]

@@ -21,6 +21,7 @@ class RiskManager:
 
     open_order_count: int = 0
     total_exposure_usd: float = 0.0
+    _strategy_exposure: dict[str, float] = field(default_factory=dict)
     _rejected: list[str] = field(default_factory=list)
 
     def check(self, signal: Signal) -> bool:
@@ -37,14 +38,37 @@ class RiskManager:
             self._reject(signal, f"price {signal.price} out of (0,1) range")
             return False
 
+        # Per-strategy exposure cap
+        strategy_name = signal.metadata.get("strategy")
+        cap = signal.metadata.get("strategy_exposure_cap")
+        if strategy_name and cap is not None:
+            current = self._strategy_exposure.get(strategy_name, 0.0)
+            if current + signal.size > cap:
+                self._reject(signal, f"strategy '{strategy_name}' exposure "
+                             f"{current + signal.size:.2f} > cap {cap:.2f}")
+                return False
+
         return True
 
     def record_order(self, signal: Signal) -> None:
         self.open_order_count += 1
         self.total_exposure_usd += signal.size
+        strategy_name = signal.metadata.get("strategy")
+        if strategy_name:
+            self._strategy_exposure[strategy_name] = (
+                self._strategy_exposure.get(strategy_name, 0.0) + signal.size
+            )
 
-    def record_cancel(self) -> None:
+    def record_cancel(self, strategy_name: str | None = None, size: float = 0.0) -> None:
         self.open_order_count = max(0, self.open_order_count - 1)
+        self.total_exposure_usd = max(0.0, self.total_exposure_usd - size)
+        if strategy_name and strategy_name in self._strategy_exposure:
+            self._strategy_exposure[strategy_name] = max(
+                0.0, self._strategy_exposure[strategy_name] - size
+            )
+
+    def get_strategy_exposure(self, strategy_name: str) -> float:
+        return self._strategy_exposure.get(strategy_name, 0.0)
 
     def _reject(self, signal: Signal, reason: str) -> None:
         logger.warning("RISK REJECTED [%s]: %s – %s %s @ %.4f",
