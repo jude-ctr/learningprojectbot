@@ -27,12 +27,16 @@ class PolymarketConnector:
     """
 
     def __init__(self) -> None:
+        # ClobClient's 'key' param is the private key (not an API key).
+        # Pass None when empty to avoid hex parsing errors.
+        private_key = settings.private_key if settings.private_key else None
+
         self._client = ClobClient(
             host="https://clob.polymarket.com",
-            key=settings.polymarket_api_key or "",
+            key=private_key,
             chain_id=settings.chain_id,
             signature_type=2,  # POLY_GNOSIS_SAFE
-            funder=settings.private_key or None,
+            funder=private_key,
         )
         self._authenticated = False
 
