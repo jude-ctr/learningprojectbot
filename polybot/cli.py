@@ -68,6 +68,12 @@ def main() -> None:
     else:
         logger.warning("Could not fetch wallet balance – balance-based risk checks disabled")
 
+    if settings.trade_size_mode == "percent":
+        if balance is not None:
+            logger.info("Trade sizing: PERCENT mode (sizes scale with wallet balance)")
+        else:
+            logger.warning("Trade sizing: PERCENT mode selected but no wallet balance available – falling back to fixed USD sizes")
+
     strategies = _build_strategies()
 
     engine = Engine(

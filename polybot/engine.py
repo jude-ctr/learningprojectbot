@@ -146,6 +146,9 @@ class Engine:
 
         context = self._build_context(price_markets)
 
+        # Pass wallet balance so strategies can compute %-based sizing
+        context["wallet_balance"] = self.risk.wallet_balance
+
         if not context.get("midpoints"):
             logger.warning("No midpoints available – skipping tick")
             return

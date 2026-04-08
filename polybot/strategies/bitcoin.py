@@ -92,12 +92,21 @@ class BitcoinStrategy(BaseStrategy):
             return []
         return [m for m in markets if is_btc_market(m)]
 
+    def _resolve_sizes(self, wallet_balance: float | None) -> tuple[float, float]:
+        """Return (base_size, max_exposure) based on sizing mode."""
+        if settings.trade_size_mode == "percent" and wallet_balance and wallet_balance > 0:
+            base = round(wallet_balance * settings.btc_base_size_pct / 100, 2)
+            cap = round(wallet_balance * settings.btc_max_exposure_pct / 100, 2)
+            return base, cap
+        return self.base_size_usd, self.max_exposure_usd
+
     def on_tick(self, markets: list[Market], context: dict[str, Any]) -> list[Signal]:
         if not settings.btc_strategy_enabled:
             return []
 
         signals: list[Signal] = []
         midpoints = context.get("midpoints", {})
+        base_size, max_exposure = self._resolve_sizes(context.get("wallet_balance"))
 
         btc_markets = [m for m in markets if is_btc_market(m)]
         if not btc_markets:
@@ -125,13 +134,14 @@ class BitcoinStrategy(BaseStrategy):
 
             if strong:
                 leverage = 1.0 + (self.max_leverage - 1.0) * conviction
-                sized = round(self.base_size_usd * leverage, 2)
+                sized = round(base_size * leverage, 2)
                 going_up = spread > 0
                 outcome = "YES" if going_up else "NO"
                 price = mid + 0.01 if going_up else (1.0 - mid) + 0.01
                 price = round(min(max(price, 0.01), 0.99), 4)
 
                 signals.append(self._signal(mkt, Side.BUY, outcome, price, sized,
+                                            exposure_cap=max_exposure,
                                             reason="btc_momentum", conviction=conviction, leverage=leverage))
                 state.last_signal_side = outcome
                 state.position_size = sized
@@ -148,6 +158,7 @@ class BitcoinStrategy(BaseStrategy):
                     hedge_price = round(min(max(hedge_price, 0.01), 0.99), 4)
 
                     signals.append(self._signal(mkt, Side.BUY, hedge_outcome, hedge_price, hedge_size,
+                                                exposure_cap=max_exposure,
                                                 reason="btc_hedge", hedging=state.last_signal_side))
                     logger.info("BTC HEDGE: %s on '%s' → buying %s @ %.4f x $%.2f",
                                 state.last_signal_side, mkt.question, hedge_outcome, hedge_price, hedge_size)
@@ -155,11 +166,12 @@ class BitcoinStrategy(BaseStrategy):
         return signals
 
     def _signal(self, market: Market, side: Side, outcome: str, price: float,
-                size: float, **meta: Any) -> Signal:
+                size: float, exposure_cap: float | None = None, **meta: Any) -> Signal:
+        cap = exposure_cap if exposure_cap is not None else self.max_exposure_usd
         return Signal(
             market=market, side=side, outcome=outcome, price=price, size=size,
             order_type=OrderType.LIMIT,
-            metadata={"strategy": self.name, "strategy_exposure_cap": self.max_exposure_usd, **meta},
+            metadata={"strategy": self.name, "strategy_exposure_cap": cap, **meta},
         )
 
     def on_fill(self, signal: Signal, fill_info: dict[str, Any]) -> None:

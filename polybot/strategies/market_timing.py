@@ -91,6 +91,14 @@ class MarketTimingHedge(BaseStrategy):
             return []
         return filter_by_scope(markets, settings.market_timing_scope)
 
+    def _resolve_sizes(self, wallet_balance: float | None) -> tuple[float, float]:
+        """Return (base_size, max_exposure) based on sizing mode."""
+        if settings.trade_size_mode == "percent" and wallet_balance and wallet_balance > 0:
+            base = round(wallet_balance * settings.market_timing_base_size_pct / 100, 2)
+            cap = round(wallet_balance * settings.market_timing_max_exposure_pct / 100, 2)
+            return base, cap
+        return self.base_size_usd, self.max_exposure_usd
+
     def on_tick(self, markets: list[Market], context: dict[str, Any]) -> list[Signal]:
         if not settings.market_timing_enabled:
             return []
@@ -102,6 +110,7 @@ class MarketTimingHedge(BaseStrategy):
 
         signals: list[Signal] = []
         midpoints = context.get("midpoints", {})
+        self._tick_base_size, self._tick_max_exposure = self._resolve_sizes(context.get("wallet_balance"))
 
         for mkt in scoped_markets:
             mid = midpoints.get(mkt.condition_id)
@@ -142,8 +151,9 @@ class MarketTimingHedge(BaseStrategy):
 
         if strong:
             # ── Directional entry with leverage scaling ──────────────
+            base = getattr(self, "_tick_base_size", self.base_size_usd)
             leverage = 1.0 + (self.max_leverage - 1.0) * conviction
-            sized = round(self.base_size_usd * leverage, 2)
+            sized = round(base * leverage, 2)
             going_up = spread > 0
 
             outcome = "YES" if going_up else "NO"
@@ -198,6 +208,7 @@ class MarketTimingHedge(BaseStrategy):
         size: float,
         **extra_meta: Any,
     ) -> Signal:
+        cap = getattr(self, "_tick_max_exposure", self.max_exposure_usd)
         return Signal(
             market=market,
             side=side,
@@ -207,7 +218,7 @@ class MarketTimingHedge(BaseStrategy):
             order_type=OrderType.LIMIT,
             metadata={
                 "strategy": self.name,
-                "strategy_exposure_cap": self.max_exposure_usd,
+                "strategy_exposure_cap": cap,
                 **extra_meta,
             },
         )

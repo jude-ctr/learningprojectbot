@@ -73,6 +73,11 @@ class Settings:
     max_position_size_usd: float = field(default_factory=lambda: _env_float("MAX_POSITION_SIZE_USD", 100.0))
     max_open_orders: int = field(default_factory=lambda: _env_int("MAX_OPEN_ORDERS", 10))
 
+    # ── Trade sizing mode ───────────────────────────────────────────────
+    # "fixed"   = use *_BASE_SIZE_USD values directly (default)
+    # "percent" = compute trade size as a percentage of wallet balance
+    trade_size_mode: str = field(default_factory=lambda: _env("TRADE_SIZE_MODE", "fixed"))
+
     # ── Shutdown behaviour ──────────────────────────────────────────────
     cancel_on_shutdown: bool = field(default_factory=lambda: _env_bool("CANCEL_ON_SHUTDOWN", True))
 
@@ -94,8 +99,10 @@ class Settings:
     market_timing_momentum_threshold: float = field(default_factory=lambda: _env_float("MARKET_TIMING_MOMENTUM_THRESHOLD", 0.02))
     market_timing_hedge_ratio: float = field(default_factory=lambda: _env_float("MARKET_TIMING_HEDGE_RATIO", 0.5))
     market_timing_base_size_usd: float = field(default_factory=lambda: _env_float("MARKET_TIMING_BASE_SIZE_USD", 10.0))
+    market_timing_base_size_pct: float = field(default_factory=lambda: _env_float("MARKET_TIMING_BASE_SIZE_PCT", 2.0))
     market_timing_max_leverage: float = field(default_factory=lambda: _env_float("MARKET_TIMING_MAX_LEVERAGE", 3.0))
     market_timing_max_exposure_usd: float = field(default_factory=lambda: _env_float("MARKET_TIMING_MAX_EXPOSURE_USD", 500.0))
+    market_timing_max_exposure_pct: float = field(default_factory=lambda: _env_float("MARKET_TIMING_MAX_EXPOSURE_PCT", 20.0))
     market_timing_max_positions: int = field(default_factory=lambda: _env_int("MARKET_TIMING_MAX_POSITIONS", 5))
 
     # ── Midpoint spread strategy ─────────────────────────────────────────
@@ -104,8 +111,10 @@ class Settings:
     # ── Bitcoin strategy ─────────────────────────────────────────────────
     btc_strategy_enabled: bool = field(default_factory=lambda: _env_bool("BTC_STRATEGY_ENABLED", True))
     btc_base_size_usd: float = field(default_factory=lambda: _env_float("BTC_BASE_SIZE_USD", 15.0))
+    btc_base_size_pct: float = field(default_factory=lambda: _env_float("BTC_BASE_SIZE_PCT", 3.0))
     btc_max_leverage: float = field(default_factory=lambda: _env_float("BTC_MAX_LEVERAGE", 3.0))
     btc_max_exposure_usd: float = field(default_factory=lambda: _env_float("BTC_MAX_EXPOSURE_USD", 500.0))
+    btc_max_exposure_pct: float = field(default_factory=lambda: _env_float("BTC_MAX_EXPOSURE_PCT", 25.0))
     btc_momentum_threshold: float = field(default_factory=lambda: _env_float("BTC_MOMENTUM_THRESHOLD", 0.015))
     btc_ema_fast: int = field(default_factory=lambda: _env_int("BTC_EMA_FAST", 4))
     btc_ema_slow: int = field(default_factory=lambda: _env_int("BTC_EMA_SLOW", 12))
@@ -115,8 +124,10 @@ class Settings:
     # ── Crypto broad strategy ────────────────────────────────────────────
     crypto_strategy_enabled: bool = field(default_factory=lambda: _env_bool("CRYPTO_STRATEGY_ENABLED", True))
     crypto_base_size_usd: float = field(default_factory=lambda: _env_float("CRYPTO_BASE_SIZE_USD", 10.0))
+    crypto_base_size_pct: float = field(default_factory=lambda: _env_float("CRYPTO_BASE_SIZE_PCT", 2.0))
     crypto_max_leverage: float = field(default_factory=lambda: _env_float("CRYPTO_MAX_LEVERAGE", 2.5))
     crypto_max_exposure_usd: float = field(default_factory=lambda: _env_float("CRYPTO_MAX_EXPOSURE_USD", 400.0))
+    crypto_max_exposure_pct: float = field(default_factory=lambda: _env_float("CRYPTO_MAX_EXPOSURE_PCT", 20.0))
     crypto_momentum_threshold: float = field(default_factory=lambda: _env_float("CRYPTO_MOMENTUM_THRESHOLD", 0.02))
     crypto_ema_fast: int = field(default_factory=lambda: _env_int("CRYPTO_EMA_FAST", 5))
     crypto_ema_slow: int = field(default_factory=lambda: _env_int("CRYPTO_EMA_SLOW", 15))
