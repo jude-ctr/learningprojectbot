@@ -70,7 +70,8 @@ def main() -> None:
     try:
         asyncio.run(engine.run())
     except KeyboardInterrupt:
-        engine.stop()
+        logger.info("Ctrl+C received – shutting down gracefully...")
+        engine.shutdown()
         logger.info("Shutdown complete")
 
 

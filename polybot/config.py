@@ -73,6 +73,9 @@ class Settings:
     max_position_size_usd: float = field(default_factory=lambda: _env_float("MAX_POSITION_SIZE_USD", 100.0))
     max_open_orders: int = field(default_factory=lambda: _env_int("MAX_OPEN_ORDERS", 10))
 
+    # ── Shutdown behaviour ──────────────────────────────────────────────
+    cancel_on_shutdown: bool = field(default_factory=lambda: _env_bool("CANCEL_ON_SHUTDOWN", True))
+
     # ── Market scope (controls which markets the bot trades) ─────────────
     # Options: "all", "btc", "crypto", "btc+crypto"
     # "all"        = every market on Polymarket

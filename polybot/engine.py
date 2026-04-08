@@ -84,6 +84,27 @@ class Engine:
         self._running = False
         logger.info("Engine stopping")
 
+    def shutdown(self) -> None:
+        """Graceful shutdown: cancel all open orders on Polymarket."""
+        self.stop()
+        if not settings.cancel_on_shutdown:
+            logger.info("CANCEL_ON_SHUTDOWN=false – leaving orders open")
+            return
+        if settings.dry_run:
+            logger.info("Dry-run mode – no live orders to cancel")
+            return
+        logger.info("Cancelling all open orders on Polymarket...")
+        try:
+            open_orders = self.connector.get_open_orders()
+            if not open_orders:
+                logger.info("No open orders found")
+                return
+            logger.info("Found %d open order(s) – cancelling...", len(open_orders))
+            result = self.connector.cancel_all()
+            logger.info("Cancel-all result: %s", result)
+        except Exception:
+            logger.exception("Failed to cancel orders during shutdown")
+
     # ── Single tick ──────────────────────────────────────────────────────
 
     async def _tick(self) -> None:
