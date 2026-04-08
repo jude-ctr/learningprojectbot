@@ -40,6 +40,12 @@ class PolymarketConnector:
         self._authenticated = False
 
         if settings.private_key:
+            try:
+                from eth_account import Account
+                acct = Account.from_key(settings.private_key)
+                logger.info("Wallet address: %s", acct.address)
+            except Exception:
+                pass
             self._authenticate()
         else:
             logger.warning(
