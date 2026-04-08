@@ -69,20 +69,48 @@ class PolymarketConnector:
             from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
             params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
             resp = self._client.get_balance_allowance(params)
+            logger.info("Balance API raw response: %s", resp)
+
+            if isinstance(resp, str):
+                import json
+                try:
+                    resp = json.loads(resp)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
             if isinstance(resp, dict):
-                raw = resp.get("balance", 0)
-                balance = float(raw)
-                # USDC has 6 decimals on Polygon — API may return raw units
-                if balance > 1_000_000:
-                    balance = balance / 1e6
-                return balance
-            logger.debug("Unexpected balance response type: %s", type(resp))
+                # Try multiple possible key names
+                raw = None
+                for key in ("balance", "Balance", "amount", "collateral", "available"):
+                    if key in resp:
+                        raw = resp[key]
+                        break
+                if raw is None and len(resp) > 0:
+                    # Log all keys so we can see the structure
+                    logger.info("Balance response keys: %s", list(resp.keys()))
+                    # Try first numeric-looking value
+                    for k, v in resp.items():
+                        try:
+                            raw = float(v)
+                            logger.info("Using key '%s' = %s as balance", k, v)
+                            break
+                        except (ValueError, TypeError):
+                            continue
+
+                if raw is not None:
+                    balance = float(raw)
+                    # USDC has 6 decimals on Polygon — API may return raw units
+                    if balance > 1_000_000:
+                        balance = balance / 1e6
+                    return balance
+
+            logger.warning("Could not parse balance from response: %s (type=%s)", resp, type(resp).__name__)
             return None
         except ImportError:
             logger.debug("BalanceAllowanceParams not available in this py-clob-client version")
             return None
         except Exception:
-            logger.debug("Failed to fetch USDC balance", exc_info=True)
+            logger.exception("Failed to fetch USDC balance")
             return None
 
     # ── Market data (no auth required) ───────────────────────────────────
