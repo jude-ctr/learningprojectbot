@@ -30,6 +30,11 @@ class MidpointSpread(BaseStrategy):
         self.spread = spread_bps / 10_000
         self.size_usd = size_usd
 
+    def filter_markets(self, markets: list[Market]) -> list[Market]:
+        if not settings.spread_enabled:
+            return []
+        return markets
+
     def on_tick(self, markets: list[Market], context: dict[str, Any]) -> list[Signal]:
         if not settings.spread_enabled:
             return []

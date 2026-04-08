@@ -86,6 +86,11 @@ class MarketTimingHedge(BaseStrategy):
 
     # ── Core tick logic ──────────────────────────────────────────────────
 
+    def filter_markets(self, markets: list[Market]) -> list[Market]:
+        if not settings.market_timing_enabled:
+            return []
+        return filter_by_scope(markets, settings.market_timing_scope)
+
     def on_tick(self, markets: list[Market], context: dict[str, Any]) -> list[Signal]:
         if not settings.market_timing_enabled:
             return []

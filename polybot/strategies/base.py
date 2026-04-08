@@ -19,6 +19,15 @@ class BaseStrategy(abc.ABC):
 
     name: str = "unnamed"
 
+    def filter_markets(self, markets: list[Market]) -> list[Market]:
+        """Return the subset of markets this strategy needs prices for.
+
+        Override in subclasses to narrow the set (e.g. BTC-only).
+        The engine uses the union of all strategies' filtered markets to
+        decide which tokens to fetch prices for.  Default: all markets.
+        """
+        return markets
+
     @abc.abstractmethod
     def on_tick(self, markets: list[Market], context: dict[str, Any]) -> list[Signal]:
         """Evaluate markets and return trade signals (or empty list)."""

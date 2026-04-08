@@ -119,6 +119,11 @@ class CryptoBroadStrategy(BaseStrategy):
             lambda: _CryptoMarketState(history=deque(maxlen=self.lookback))
         )
 
+    def filter_markets(self, markets: list[Market]) -> list[Market]:
+        if not settings.crypto_strategy_enabled:
+            return []
+        return [m for m in markets if is_crypto_market(m)]
+
     def on_tick(self, markets: list[Market], context: dict[str, Any]) -> list[Signal]:
         if not settings.crypto_strategy_enabled:
             return []

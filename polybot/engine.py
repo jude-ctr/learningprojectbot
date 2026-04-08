@@ -101,7 +101,18 @@ class Engine:
             logger.warning("No tradeable markets in scope '%s' – skipping tick", settings.market_scope)
             return
 
-        context = self._build_context(markets)
+        # Pre-filter: only fetch prices for markets that at least one
+        # enabled strategy actually needs.  This avoids 40+ API calls
+        # when only a niche strategy (e.g. BTC-only) is enabled.
+        needed_ids: set[str] = set()
+        for strategy in self.strategies:
+            for m in strategy.filter_markets(markets):
+                needed_ids.add(m.condition_id)
+
+        price_markets = [m for m in markets if m.condition_id in needed_ids] if needed_ids else markets
+        logger.info("Strategies need prices for %d / %d scoped markets", len(price_markets), len(markets))
+
+        context = self._build_context(price_markets)
 
         if not context.get("midpoints"):
             logger.warning("No midpoints available – skipping tick")
