@@ -1,8 +1,11 @@
 """Bitcoin-focused strategy.
 
 Filters for BTC-related Polymarket markets (price targets, ETF flows,
-hash rate, halving, Satoshi, etc.) and trades them with momentum +
-hedging logic tuned for Bitcoin's volatility profile.
+hash rate, halving, Satoshi, etc.) and trades them with two signal modes:
+
+1. EMA crossover — detects gradual momentum shifts (needs 12+ ticks warm-up)
+2. 5-minute candle — detects sharp price moves over a configurable window
+   (fires as soon as the window fills, much faster to trigger)
 
 Toggle via BTC_STRATEGY_ENABLED=true/false in .env.
 """
@@ -12,7 +15,7 @@ from __future__ import annotations
 import logging
 import re
 from collections import defaultdict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from polybot.config import settings
@@ -59,16 +62,15 @@ class _BTCMarketState:
     history: deque
     last_signal_side: str | None = None
     position_size: float = 0.0
+    candle_signaled: bool = False  # prevent repeat candle signals same direction
 
 
 class BitcoinStrategy(BaseStrategy):
     """Momentum strategy exclusively for Bitcoin-related prediction markets.
 
-    Behaviour:
-        - Scans all markets each tick, only acts on BTC-related ones
-        - Uses faster EMA crossover tuned for crypto volatility
-        - Higher default hedge ratio (0.6) — BTC markets can reverse fast
-        - Leverage scales with conviction like MarketTimingHedge
+    Two detection modes run in parallel:
+        1. EMA crossover (slow, needs warm-up, detects trends)
+        2. 5-min candle breakout (fast, fires on sharp moves)
     """
 
     name = "bitcoin"
@@ -82,9 +84,13 @@ class BitcoinStrategy(BaseStrategy):
         self.base_size_usd = settings.btc_base_size_usd
         self.max_leverage = settings.btc_max_leverage
         self.max_exposure_usd = settings.btc_max_exposure_usd
+        self.candle_ticks = settings.btc_candle_ticks
+        self.candle_threshold = settings.btc_candle_threshold
 
+        # History must hold enough for both EMA and candle lookback
+        max_history = max(self.lookback, self.candle_ticks + 1)
         self._states: dict[str, _BTCMarketState] = defaultdict(
-            lambda: _BTCMarketState(history=deque(maxlen=self.lookback))
+            lambda: _BTCMarketState(history=deque(maxlen=max_history))
         )
 
     def filter_markets(self, markets: list[Market]) -> list[Market]:
@@ -112,9 +118,12 @@ class BitcoinStrategy(BaseStrategy):
         if not btc_markets:
             return []
 
-        ready_count = 0
+        ema_ready = 0
+        candle_ready = 0
         max_spread = 0.0
+        max_candle_delta = 0.0
         max_spread_market = ""
+        max_candle_market = ""
 
         for mkt in btc_markets:
             mid = midpoints.get(mkt.condition_id)
@@ -124,10 +133,50 @@ class BitcoinStrategy(BaseStrategy):
             state = self._states[mkt.condition_id]
             state.history.append(mid)
 
+            # ── Signal mode 1: 5-minute candle breakout ─────────────
+            if len(state.history) >= self.candle_ticks:
+                candle_ready += 1
+                old_price = state.history[-self.candle_ticks]
+                delta = mid - old_price
+
+                if abs(delta) > abs(max_candle_delta):
+                    max_candle_delta = delta
+                    max_candle_market = mkt.question[:60]
+
+                if abs(delta) >= self.candle_threshold:
+                    going_up = delta > 0
+                    expected_side = "YES" if going_up else "NO"
+
+                    # Only fire once per direction (reset on reversal)
+                    if state.candle_signaled and state.last_signal_side == expected_side:
+                        pass  # already signaled this direction
+                    else:
+                        conviction = min(abs(delta) / self.candle_threshold, 1.0)
+                        leverage = 1.0 + (self.max_leverage - 1.0) * conviction
+                        sized = round(base_size * leverage, 2)
+                        outcome = expected_side
+                        price = mid + 0.01 if going_up else (1.0 - mid) + 0.01
+                        price = round(min(max(price, 0.01), 0.99), 4)
+
+                        signals.append(self._signal(mkt, Side.BUY, outcome, price, sized,
+                                                    exposure_cap=max_exposure,
+                                                    reason="btc_candle_5m", delta=round(delta, 6),
+                                                    conviction=conviction, leverage=leverage))
+                        logger.info("BTC CANDLE: '%s' moved %+.4f in %d ticks → BUY %s @ %.4f x $%.2f",
+                                    mkt.question[:50], delta, self.candle_ticks, outcome, price, sized)
+                        state.last_signal_side = outcome
+                        state.position_size = sized
+                        state.candle_signaled = True
+
+                    # Reset candle flag on reversal
+                    if state.candle_signaled and state.last_signal_side != expected_side:
+                        state.candle_signaled = False
+
+            # ── Signal mode 2: EMA crossover (existing logic) ───────
             if len(state.history) < self.ema_slow:
                 continue
 
-            ready_count += 1
+            ema_ready += 1
             prices = list(state.history)
             ema_f = _ema(prices, self.ema_fast)
             ema_s = _ema(prices, self.ema_slow)
@@ -172,15 +221,13 @@ class BitcoinStrategy(BaseStrategy):
                     logger.info("BTC HEDGE: %s on '%s' → buying %s @ %.4f x $%.2f",
                                 state.last_signal_side, mkt.question, hedge_outcome, hedge_price, hedge_size)
 
-        # Diagnostic: show what's happening inside the strategy
+        # Diagnostic summary
         if btc_markets:
-            warming = len(btc_markets) - ready_count
             logger.info(
-                "BTC scan: %d markets (%d warming up, %d ready) | "
-                "max spread=%.6f (threshold=%.4f) | signals=%d%s",
-                len(btc_markets), warming, ready_count,
-                max_spread, self.momentum_threshold, len(signals),
-                f" | hottest: '{max_spread_market}'" if max_spread_market else "",
+                "BTC scan: %d mkts | EMA: %d ready, spread=%.6f (need %.4f) | "
+                "Candle: %d ready, delta=%.6f (need %.4f) | signals=%d",
+                len(btc_markets), ema_ready, max_spread, self.momentum_threshold,
+                candle_ready, max_candle_delta, self.candle_threshold, len(signals),
             )
 
         return signals

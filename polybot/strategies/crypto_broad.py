@@ -93,6 +93,7 @@ class _CryptoMarketState:
     history: deque
     last_signal_side: str | None = None
     position_size: float = 0.0
+    candle_signaled: bool = False
 
 
 class CryptoBroadStrategy(BaseStrategy):
@@ -114,9 +115,12 @@ class CryptoBroadStrategy(BaseStrategy):
         self.base_size_usd = settings.crypto_base_size_usd
         self.max_leverage = settings.crypto_max_leverage
         self.max_exposure_usd = settings.crypto_max_exposure_usd
+        self.candle_ticks = settings.crypto_candle_ticks
+        self.candle_threshold = settings.crypto_candle_threshold
 
+        max_history = max(self.lookback, self.candle_ticks + 1)
         self._states: dict[str, _CryptoMarketState] = defaultdict(
-            lambda: _CryptoMarketState(history=deque(maxlen=self.lookback))
+            lambda: _CryptoMarketState(history=deque(maxlen=max_history))
         )
 
     def filter_markets(self, markets: list[Market]) -> list[Market]:
@@ -152,6 +156,34 @@ class CryptoBroadStrategy(BaseStrategy):
             state = self._states[mkt.condition_id]
             state.history.append(mid)
 
+            # ── 5-minute candle breakout ─────────────────────────────
+            if len(state.history) >= self.candle_ticks:
+                old_price = state.history[-self.candle_ticks]
+                delta = mid - old_price
+
+                if abs(delta) >= self.candle_threshold:
+                    going_up = delta > 0
+                    expected_side = "YES" if going_up else "NO"
+
+                    if not (state.candle_signaled and state.last_signal_side == expected_side):
+                        conviction = min(abs(delta) / self.candle_threshold, 1.0)
+                        leverage = 1.0 + (self.max_leverage - 1.0) * conviction
+                        sized = round(base_size * leverage, 2)
+                        price = mid + 0.01 if going_up else (1.0 - mid) + 0.01
+                        price = round(min(max(price, 0.01), 0.99), 4)
+
+                        signals.append(self._signal(mkt, Side.BUY, expected_side, price, sized,
+                                                    exposure_cap=max_exposure,
+                                                    reason="crypto_candle_5m", delta=round(delta, 6),
+                                                    conviction=conviction, leverage=leverage))
+                        state.last_signal_side = expected_side
+                        state.position_size = sized
+                        state.candle_signaled = True
+
+                    if state.candle_signaled and state.last_signal_side != expected_side:
+                        state.candle_signaled = False
+
+            # ── EMA crossover ────────────────────────────────────────
             if len(state.history) < self.ema_slow:
                 continue
 

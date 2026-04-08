@@ -104,6 +104,8 @@ class Settings:
     market_timing_max_exposure_usd: float = field(default_factory=lambda: _env_float("MARKET_TIMING_MAX_EXPOSURE_USD", 500.0))
     market_timing_max_exposure_pct: float = field(default_factory=lambda: _env_float("MARKET_TIMING_MAX_EXPOSURE_PCT", 20.0))
     market_timing_max_positions: int = field(default_factory=lambda: _env_int("MARKET_TIMING_MAX_POSITIONS", 5))
+    market_timing_candle_ticks: int = field(default_factory=lambda: _env_int("MARKET_TIMING_CANDLE_TICKS", 30))
+    market_timing_candle_threshold: float = field(default_factory=lambda: _env_float("MARKET_TIMING_CANDLE_THRESHOLD", 0.01))
 
     # ── Midpoint spread strategy ─────────────────────────────────────────
     spread_enabled: bool = field(default_factory=lambda: _env_bool("SPREAD_ENABLED", True))
@@ -120,6 +122,8 @@ class Settings:
     btc_ema_slow: int = field(default_factory=lambda: _env_int("BTC_EMA_SLOW", 12))
     btc_lookback: int = field(default_factory=lambda: _env_int("BTC_LOOKBACK", 20))
     btc_hedge_ratio: float = field(default_factory=lambda: _env_float("BTC_HEDGE_RATIO", 0.6))
+    btc_candle_ticks: int = field(default_factory=lambda: _env_int("BTC_CANDLE_TICKS", 30))           # 30×10s = 5 min
+    btc_candle_threshold: float = field(default_factory=lambda: _env_float("BTC_CANDLE_THRESHOLD", 0.01))  # 1% move
 
     # ── Crypto broad strategy ────────────────────────────────────────────
     crypto_strategy_enabled: bool = field(default_factory=lambda: _env_bool("CRYPTO_STRATEGY_ENABLED", True))
@@ -133,6 +137,8 @@ class Settings:
     crypto_ema_slow: int = field(default_factory=lambda: _env_int("CRYPTO_EMA_SLOW", 15))
     crypto_lookback: int = field(default_factory=lambda: _env_int("CRYPTO_LOOKBACK", 20))
     crypto_hedge_ratio: float = field(default_factory=lambda: _env_float("CRYPTO_HEDGE_RATIO", 0.4))
+    crypto_candle_ticks: int = field(default_factory=lambda: _env_int("CRYPTO_CANDLE_TICKS", 30))
+    crypto_candle_threshold: float = field(default_factory=lambda: _env_float("CRYPTO_CANDLE_THRESHOLD", 0.01))
 
     # ── Confluence mode ──────────────────────────────────────────────────
     confluence_enabled: bool = field(default_factory=lambda: _env_bool("CONFLUENCE_ENABLED", False))

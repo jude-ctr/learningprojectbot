@@ -41,6 +41,7 @@ class _MarketState:
     history: deque  # midpoint history
     last_signal_side: str | None = None  # track what we're currently exposed to
     position_size: float = 0.0
+    candle_signaled: bool = False
 
 
 class MarketTimingHedge(BaseStrategy):
@@ -78,9 +79,12 @@ class MarketTimingHedge(BaseStrategy):
         self.max_leverage = max_leverage or settings.market_timing_max_leverage
         self.max_exposure_usd = max_exposure_usd or settings.market_timing_max_exposure_usd
         self.max_positions = max_positions or settings.market_timing_max_positions
+        self.candle_ticks = settings.market_timing_candle_ticks
+        self.candle_threshold = settings.market_timing_candle_threshold
 
+        max_history = max(self.lookback, self.candle_ticks + 1)
         self._states: dict[str, _MarketState] = defaultdict(
-            lambda: _MarketState(history=deque(maxlen=self.lookback))
+            lambda: _MarketState(history=deque(maxlen=max_history))
         )
         self._active_position_count = 0
 
@@ -112,9 +116,10 @@ class MarketTimingHedge(BaseStrategy):
         midpoints = context.get("midpoints", {})
         self._tick_base_size, self._tick_max_exposure = self._resolve_sizes(context.get("wallet_balance"))
 
-        ready_count = 0
+        ema_ready = 0
+        candle_ready = 0
         max_spread = 0.0
-        max_spread_market = ""
+        max_candle_delta = 0.0
 
         for mkt in scoped_markets:
             mid = midpoints.get(mkt.condition_id)
@@ -124,10 +129,46 @@ class MarketTimingHedge(BaseStrategy):
             state = self._states[mkt.condition_id]
             state.history.append(mid)
 
+            # ── 5-minute candle breakout ─────────────────────────────
+            if len(state.history) >= self.candle_ticks:
+                candle_ready += 1
+                old_price = state.history[-self.candle_ticks]
+                delta = mid - old_price
+                if abs(delta) > abs(max_candle_delta):
+                    max_candle_delta = delta
+
+                if abs(delta) >= self.candle_threshold:
+                    going_up = delta > 0
+                    expected_side = "YES" if going_up else "NO"
+
+                    if not (state.candle_signaled and state.last_signal_side == expected_side):
+                        base = getattr(self, "_tick_base_size", self.base_size_usd)
+                        conviction = min(abs(delta) / self.candle_threshold, 1.0)
+                        leverage = 1.0 + (self.max_leverage - 1.0) * conviction
+                        sized = round(base * leverage, 2)
+                        price = mid + 0.01 if going_up else (1.0 - mid) + 0.01
+                        price = round(min(max(price, 0.01), 0.99), 4)
+
+                        if self._active_position_count < self.max_positions:
+                            signals.append(self._make_signal(
+                                mkt, Side.BUY, expected_side, price, sized,
+                                reason="candle_5m", delta=round(delta, 6),
+                                conviction=conviction, leverage=leverage,
+                            ))
+                            logger.info("TIMING CANDLE: '%s' moved %+.4f in %d ticks → BUY %s @ %.4f x $%.2f",
+                                        mkt.question[:50], delta, self.candle_ticks, expected_side, price, sized)
+                            state.last_signal_side = expected_side
+                            state.position_size = sized
+                            state.candle_signaled = True
+
+                    if state.candle_signaled and state.last_signal_side != expected_side:
+                        state.candle_signaled = False
+
+            # ── EMA crossover ────────────────────────────────────────
             if len(state.history) < self.ema_slow:
                 continue  # not enough data yet
 
-            ready_count += 1
+            ema_ready += 1
             prices = list(state.history)
             ema_f = _ema(prices, self.ema_fast)
             ema_s = _ema(prices, self.ema_slow)
@@ -135,7 +176,6 @@ class MarketTimingHedge(BaseStrategy):
             spread = ema_f[-1] - ema_s[-1]  # positive = upward momentum
             if abs(spread) > abs(max_spread):
                 max_spread = spread
-                max_spread_market = mkt.question[:60]
 
             velocity = spread - (ema_f[-2] - ema_s[-2]) if len(ema_f) >= 2 else 0.0
             conviction = min(abs(spread) / self.momentum_threshold, 1.0)  # 0..1
@@ -144,13 +184,11 @@ class MarketTimingHedge(BaseStrategy):
             signals.extend(new_signals)
 
         if scoped_markets:
-            warming = len(scoped_markets) - ready_count
             logger.info(
-                "Timing scan: %d markets (%d warming, %d ready) | "
-                "max spread=%.6f (threshold=%.4f) | signals=%d%s",
-                len(scoped_markets), warming, ready_count,
-                max_spread, self.momentum_threshold, len(signals),
-                f" | hottest: '{max_spread_market}'" if max_spread_market else "",
+                "Timing scan: %d mkts | EMA: %d ready, spread=%.6f (need %.4f) | "
+                "Candle: %d ready, delta=%.6f (need %.4f) | signals=%d",
+                len(scoped_markets), ema_ready, max_spread, self.momentum_threshold,
+                candle_ready, max_candle_delta, self.candle_threshold, len(signals),
             )
 
         return signals
