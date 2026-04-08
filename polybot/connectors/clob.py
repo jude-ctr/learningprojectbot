@@ -58,6 +58,33 @@ class PolymarketConnector:
             logger.exception("Failed to derive API credentials – write operations will be unavailable")
             self._authenticated = False
 
+    # ── Wallet balance ────────────────────────────────────────────────────
+
+    def get_usdc_balance(self) -> float | None:
+        """Fetch the wallet's USDC collateral balance from Polymarket."""
+        if not self._authenticated:
+            logger.warning("Cannot fetch balance – not authenticated")
+            return None
+        try:
+            from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+            params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+            resp = self._client.get_balance_allowance(params)
+            if isinstance(resp, dict):
+                raw = resp.get("balance", 0)
+                balance = float(raw)
+                # USDC has 6 decimals on Polygon — API may return raw units
+                if balance > 1_000_000:
+                    balance = balance / 1e6
+                return balance
+            logger.debug("Unexpected balance response type: %s", type(resp))
+            return None
+        except ImportError:
+            logger.debug("BalanceAllowanceParams not available in this py-clob-client version")
+            return None
+        except Exception:
+            logger.debug("Failed to fetch USDC balance", exc_info=True)
+            return None
+
     # ── Market data (no auth required) ───────────────────────────────────
 
     def get_markets(self, *, max_pages: int = 2) -> list[dict[str, Any]]:

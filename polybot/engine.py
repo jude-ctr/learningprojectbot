@@ -48,6 +48,8 @@ class Engine:
         self._cached_markets: list[Market] = []
         self._market_refresh_counter = 0
         self._market_refresh_interval = 30  # refresh market list every N ticks
+        self._balance_refresh_interval = 10  # refresh balance every N ticks
+        self._balance_refresh_counter = 0
 
     # ── Main loop ────────────────────────────────────────────────────────
 
@@ -114,6 +116,15 @@ class Engine:
             self._market_refresh_counter = 0
 
         self._market_refresh_counter += 1
+
+        # Refresh wallet balance periodically
+        if self._balance_refresh_counter >= self._balance_refresh_interval or self.risk.wallet_balance is None:
+            balance = self.connector.get_usdc_balance()
+            if balance is not None:
+                self.risk.update_balance(balance)
+                logger.info("Wallet USDC balance: $%.2f", balance)
+            self._balance_refresh_counter = 0
+        self._balance_refresh_counter += 1
 
         # Apply global market scope filter
         markets = filter_by_scope(self._cached_markets, settings.market_scope)

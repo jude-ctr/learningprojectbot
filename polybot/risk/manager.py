@@ -21,8 +21,14 @@ class RiskManager:
 
     open_order_count: int = 0
     total_exposure_usd: float = 0.0
+    wallet_balance: float | None = None
     _strategy_exposure: dict[str, float] = field(default_factory=dict)
     _rejected: list[str] = field(default_factory=list)
+
+    def update_balance(self, balance: float | None) -> None:
+        """Update the known wallet balance (called by the engine)."""
+        if balance is not None:
+            self.wallet_balance = balance
 
     def check(self, signal: Signal) -> bool:
         """Return True if the signal passes all risk checks."""
@@ -37,6 +43,15 @@ class RiskManager:
         if not (0 < signal.price < 1):
             self._reject(signal, f"price {signal.price} out of (0,1) range")
             return False
+
+        # Wallet balance check — block if order would exceed available funds
+        if self.wallet_balance is not None:
+            remaining = self.wallet_balance - self.total_exposure_usd
+            if signal.size > remaining:
+                self._reject(signal, f"insufficient balance: need ${signal.size:.2f} "
+                             f"but only ${remaining:.2f} available "
+                             f"(wallet ${self.wallet_balance:.2f} - exposure ${self.total_exposure_usd:.2f})")
+                return False
 
         # Per-strategy exposure cap
         strategy_name = signal.metadata.get("strategy")

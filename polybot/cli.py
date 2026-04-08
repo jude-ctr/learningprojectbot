@@ -59,6 +59,15 @@ def main() -> None:
 
     connector = PolymarketConnector()
     risk_manager = RiskManager()
+
+    # Fetch and display wallet balance at startup
+    balance = connector.get_usdc_balance()
+    if balance is not None:
+        risk_manager.update_balance(balance)
+        logger.info("Wallet USDC balance: $%.2f", balance)
+    else:
+        logger.warning("Could not fetch wallet balance – balance-based risk checks disabled")
+
     strategies = _build_strategies()
 
     engine = Engine(
