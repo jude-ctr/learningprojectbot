@@ -112,6 +112,10 @@ class MarketTimingHedge(BaseStrategy):
         midpoints = context.get("midpoints", {})
         self._tick_base_size, self._tick_max_exposure = self._resolve_sizes(context.get("wallet_balance"))
 
+        ready_count = 0
+        max_spread = 0.0
+        max_spread_market = ""
+
         for mkt in scoped_markets:
             mid = midpoints.get(mkt.condition_id)
             if mid is None:
@@ -123,16 +127,31 @@ class MarketTimingHedge(BaseStrategy):
             if len(state.history) < self.ema_slow:
                 continue  # not enough data yet
 
+            ready_count += 1
             prices = list(state.history)
             ema_f = _ema(prices, self.ema_fast)
             ema_s = _ema(prices, self.ema_slow)
 
             spread = ema_f[-1] - ema_s[-1]  # positive = upward momentum
+            if abs(spread) > abs(max_spread):
+                max_spread = spread
+                max_spread_market = mkt.question[:60]
+
             velocity = spread - (ema_f[-2] - ema_s[-2]) if len(ema_f) >= 2 else 0.0
             conviction = min(abs(spread) / self.momentum_threshold, 1.0)  # 0..1
 
             new_signals = self._evaluate_regime(mkt, mid, spread, velocity, conviction, state)
             signals.extend(new_signals)
+
+        if scoped_markets:
+            warming = len(scoped_markets) - ready_count
+            logger.info(
+                "Timing scan: %d markets (%d warming, %d ready) | "
+                "max spread=%.6f (threshold=%.4f) | signals=%d%s",
+                len(scoped_markets), warming, ready_count,
+                max_spread, self.momentum_threshold, len(signals),
+                f" | hottest: '{max_spread_market}'" if max_spread_market else "",
+            )
 
         return signals
 

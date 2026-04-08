@@ -112,6 +112,10 @@ class BitcoinStrategy(BaseStrategy):
         if not btc_markets:
             return []
 
+        ready_count = 0
+        max_spread = 0.0
+        max_spread_market = ""
+
         for mkt in btc_markets:
             mid = midpoints.get(mkt.condition_id)
             if mid is None:
@@ -123,11 +127,16 @@ class BitcoinStrategy(BaseStrategy):
             if len(state.history) < self.ema_slow:
                 continue
 
+            ready_count += 1
             prices = list(state.history)
             ema_f = _ema(prices, self.ema_fast)
             ema_s = _ema(prices, self.ema_slow)
 
             spread = ema_f[-1] - ema_s[-1]
+            if abs(spread) > abs(max_spread):
+                max_spread = spread
+                max_spread_market = mkt.question[:60]
+
             velocity = spread - (ema_f[-2] - ema_s[-2]) if len(ema_f) >= 2 else 0.0
             conviction = min(abs(spread) / self.momentum_threshold, 1.0)
             strong = abs(spread) >= self.momentum_threshold
@@ -162,6 +171,17 @@ class BitcoinStrategy(BaseStrategy):
                                                 reason="btc_hedge", hedging=state.last_signal_side))
                     logger.info("BTC HEDGE: %s on '%s' → buying %s @ %.4f x $%.2f",
                                 state.last_signal_side, mkt.question, hedge_outcome, hedge_price, hedge_size)
+
+        # Diagnostic: show what's happening inside the strategy
+        if btc_markets:
+            warming = len(btc_markets) - ready_count
+            logger.info(
+                "BTC scan: %d markets (%d warming up, %d ready) | "
+                "max spread=%.6f (threshold=%.4f) | signals=%d%s",
+                len(btc_markets), warming, ready_count,
+                max_spread, self.momentum_threshold, len(signals),
+                f" | hottest: '{max_spread_market}'" if max_spread_market else "",
+            )
 
         return signals
 
