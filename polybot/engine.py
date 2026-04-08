@@ -153,6 +153,16 @@ class Engine:
             logger.warning("No midpoints available – skipping tick")
             return
 
+        # Show sample prices every 10 ticks to verify they change
+        if self._market_refresh_counter % 10 == 1:
+            midpoints_dbg = context["midpoints"]
+            # Find market names for the sample
+            name_map = {m.condition_id: m.question[:40] for m in price_markets}
+            sample = list(midpoints_dbg.items())[:5]
+            if sample:
+                lines = [f"  {name_map.get(cid, cid[:12])}: {p:.4f}" for cid, p in sample]
+                logger.info("Price check (are they changing?):\n%s", "\n".join(lines))
+
         # Collect signals from all strategies
         confluence = ConfluenceFilter()
         strategy_signals: dict[str, list] = {}
